@@ -1,293 +1,261 @@
-<div align="center">
+# Chronicle
 
-# J.A.R.V.I.S.
-
-### Local-First AI Personal Assistant
+### Personal Health Record Intelligence
 
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-blue?logo=tauri)](https://tauri.app)
-[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://react.dev)
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://rust-lang.org)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-3178C6?logo=typescript)](https://typescriptlang.org)
+[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://react.dev)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-**Transform casual conversations into structured, searchable personal knowledge—entirely on your machine.**
+**A local-first, privacy-by-architecture personal health record system. Ingest medical PDFs, extract structured data, track changes over time, and surface correlations across your full health history.**
 
-[Features](#features) • [Architecture](#architecture) • [Quick Start](#quick-start) • [Documentation](#documentation)
-
-</div>
+> ⚠️ **Project Status: Architecture & Design Phase**
+>
+> The architecture is defined and documented. The codebase in this repository reflects an earlier iteration (PAL V1) and **has not yet been updated** to match the current Chronicle architecture described below. Implementation is underway — see [Project History](#project-history) for how we got here.
 
 ---
 
-## Overview
+## What Chronicle Is
 
-J.A.R.V.I.S. is a privacy-first AI personal assistant that runs completely locally. No cloud services, no API keys, no data leaving your machine. Powered by Ollama for local LLM inference, it combines natural language understanding with structured data management across multiple life domains.
+Chronicle is a **local-first personal health record intelligence application**. It ingests medical PDFs from patient portals, extracts structured data with confidence scoring, tracks changes over time, and surfaces correlations across your full health history.
+
+It is explicitly a **resource assistant for better doctor conversations** — not a diagnostic tool, not a clinical system.
+
+The core insight: your health data is scattered across patient portals, PDFs, and fragmented memories of what your doctor said. Chronicle gives you a single, structured, searchable record that gets smarter over time.
 
 ### Key Differentiators
 
-- **Zero Cloud Dependency** — All processing happens locally via Ollama
-- **Voice-First Interface** — Wake word activation, STT, TTS with barge-in support
-- **Structured Knowledge** — Extracts and stores data across 7 domains (food, tasks, finance, etc.)
-- **Self-Evolving Schema** — Detects patterns and proposes new data structures automatically
-- **Single-Pass NLU** — Efficient intent classification, extraction, and response in one LLM call
+- **Privacy by architecture** — All data stays on your machine. No cloud, no API keys for core functionality. Your medical records never leave your hardware.
+- **Document-first intake** — PDFs from patient portals are the primary data source, not manual conversation entry.
+- **Confidence-gated extraction** — Three-tier system: auto-store (high confidence), flag for review (medium), ask the user (low). Medical data accuracy matters.
+- **Temporal intelligence** — `occurred_at` vs. `created_at` split. When a lab was drawn matters as much as when you imported the PDF.
+- **Cross-record correlation** — Connects patterns across lab results, medications, symptoms, and provider notes over time.
 
 ---
 
 ## Architecture
 
+Chronicle inherits its architecture from PAL V3, focused on the health record vertical.
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    FRONTEND (React + Tauri)                 │
-│  • Chat interface with streaming responses                  │
-│  • Voice state visualization                                │
-│  • Self-evolution schema review panel                       │
+│                   FRONTEND (React + Tauri)                  │
+│  • Health dashboard (labs, meds, timeline)                  │
+│  • Document upload & review interface                       │
+│  • Chat interface for queries                               │
 └─────────────────────────┬───────────────────────────────────┘
-                          │ Tauri IPC + HTTP
+                          │ Tauri IPC
 ┌─────────────────────────▼───────────────────────────────────┐
-│                 RUST VOICE LAYER (Tauri 2)                  │
-│  • Audio capture (cpal) with resampling (rubato)            │
-│  • Wake word detection (OpenWakeWord/ONNX)                  │
-│  • Voice Activity Detection (VAD)                           │
-│  • State machine: Idle → Listening → Processing → Speaking  │
-└─────────────────────────┬───────────────────────────────────┘
-                          │ HTTP :3001
-┌─────────────────────────▼───────────────────────────────────┐
-│               BACKEND (Node.js + Express)                   │
-│  • Brain module — single-pass NLU pipeline                  │
-│  • Domain services (7) with CRUD + validation               │
-│  • Entity resolution with vector similarity                 │
-│  • SQLite (structured) + LanceDB (embeddings)               │
-│  • Background enrichment queue                              │
-│  • Self-evolution: pattern detection → schema proposal      │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-┌─────────────────────────▼───────────────────────────────────┐
-│                    OLLAMA (Local LLM)                       │
-│  • Default: qwen2.5:7b                                      │
-│  • Intent classification, extraction, response generation   │
-└─────────────────────────────────────────────────────────────┘
+│                  RUST BACKEND (Tauri 2)                     │
+│  • Direct Ollama REST API calls (no framework)              │
+│  • PDF ingestion pipeline                                   │
+│  • Confidence scoring & extraction                          │
+│  • Core memory management (MemGPT-inspired)                 │
+│  • Correlation engine                                       │
+│  • Reflection system                                        │
+└──────────┬──────────────────────────────┬───────────────────┘
+           │                              │
+┌──────────▼──────────┐    ┌──────────────▼───────────────────┐
+│   SQLite + sqlite-vec│    │         Ollama (Local LLM)      │
+│  • Events table      │    │  • Qwen 2.5 32B (Q6_K)          │
+│  • Documents table   │    │    Synthesis, extraction,        │
+│  • Reflections table │    │    conversation, correlation     │
+│  • Vector embeddings │    │  • nomic-embed-text              │
+│  (single store)      │    │    Event embeddings              │
+└──────────────────────┘    └─────────────────────────────────┘
+```
+
+### Core Principles
+
+| Principle | What It Means |
+|---|---|
+| **Local-First** | Data lives on your machine. Privacy by architecture. |
+| **One Model, One Call** | Qwen 32B handles classification, extraction, conversation, and synthesis in single calls. No multi-stage routing pipeline. |
+| **Self-Managing Memory** | Inspired by MemGPT/Letta. The LLM manages its own context — deciding what to keep, archive, or retrieve. |
+| **Events Are First-Class** | Every piece of data is a timestamped event with domain and type tags. Single source of truth. |
+| **Structured, Not Flat** | Events have typed fields (not generic text blobs). A lab result has values, units, reference ranges. |
+| **Documents as Source of Truth** | PDFs retain full provenance. Every extracted value traces back to a specific page of a specific document. |
+| **Honest About Confidence** | Extracted data carries confidence scores. Uncertain values are flagged, never silently stored as fact. |
+| **No Frameworks** | Direct Ollama REST API from Rust. No LangChain, no LangGraph, no abstraction layers. |
+
+---
+
+## Data Model
+
+### Events Table (Single Store)
+
+All structured data lives in one table with typed JSON fields per event type:
+
+```sql
+CREATE TABLE events (
+    event_id    TEXT PRIMARY KEY,
+    domain      TEXT NOT NULL,        -- 'health'
+    event_type  TEXT NOT NULL,        -- 'lab_result' | 'medication' | 'symptom' | 'vitals' | ...
+    summary     TEXT NOT NULL,        -- Human-readable summary
+    raw_input   TEXT,                 -- Original source text
+    fields      TEXT NOT NULL,        -- JSON: structured domain-specific data
+    source      TEXT NOT NULL,        -- 'document' | 'user' | 'system'
+    created_at  TEXT NOT NULL,        -- When imported
+    occurred_at TEXT NOT NULL,        -- When it actually happened
+    embedding   BLOB,                -- Vector embedding (sqlite-vec)
+    parent_id   TEXT,                 -- Links related events
+    FOREIGN KEY (parent_id) REFERENCES events(event_id)
+);
+```
+
+### Documents Table (PDF Provenance)
+
+```sql
+CREATE TABLE documents (
+    document_id TEXT PRIMARY KEY,
+    filename    TEXT NOT NULL,
+    file_hash   TEXT NOT NULL,        -- Deduplication
+    source      TEXT,                 -- 'mychart' | 'quest' | 'manual_upload'
+    doc_date    TEXT,                 -- Date on the document
+    imported_at TEXT NOT NULL,
+    page_count  INTEGER,
+    raw_text    TEXT                  -- Full extracted text
+);
+```
+
+### Core Memory Blocks (Always In Context)
+
+Small editable text blocks (~2-3K tokens) injected into every LLM call:
+
+| Block | Contents |
+|---|---|
+| `patient_profile` | Demographics, key medical facts, provider list |
+| `health_status` | Active conditions, current medications, recent symptoms |
+| `recent_results` | Latest lab trends, flagged abnormals |
+| `active_concerns` | Items to discuss with provider, pending follow-ups |
+
+---
+
+## Document Ingestion Pipeline
+
+```
+PDF uploaded
+    │
+    ▼
+┌─────────────────────────────────────────┐
+│  Text extraction (page-by-page)         │
+│  Document stored with hash for dedup    │
+└─────────────────┬───────────────────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────────┐
+│  Qwen 32B — Structured Extraction       │
+│                                         │
+│  For each identified data point:        │
+│  • Extract structured fields            │
+│  • Assign confidence score              │
+│  • Link to source document + page       │
+│                                         │
+│  Confidence gate:                       │
+│  • HIGH   → auto-store                  │
+│  • MEDIUM → flag for user review        │
+│  • LOW    → ask user before storing     │
+└─────────────────┬───────────────────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────────┐
+│  Events created with occurred_at        │
+│  timestamps from the document, NOT      │
+│  the import date                        │
+│  Embeddings computed on summaries       │
+│  Correlation check against existing     │
+│  health events                          │
+└─────────────────────────────────────────┘
 ```
 
 ---
 
-## Features
+## Technology Stack
 
-### Natural Language Understanding
+| Layer | Choice | Rationale |
+|---|---|---|
+| **App Framework** | Tauri v2 (Rust + React) | Native Windows, single binary, low memory |
+| **Core Language** | Rust | Performance, safety, direct Ollama integration |
+| **Frontend** | React | Dashboard + document review UI |
+| **LLM Runtime** | Ollama | Local model serving, GPU acceleration |
+| **LLM Model** | Qwen 2.5 32B (Q6_K) | ~26GB VRAM, handles all tasks in single calls |
+| **Embedding Model** | nomic-embed-text | 768 dimensions, 8K context via Ollama |
+| **Data Store** | SQLite + sqlite-vec | Events, documents, embeddings — single database |
+| **Framework** | None | Direct Ollama REST API from Rust |
 
-- **Single-pass brain architecture** — Intent classification, entity extraction, and response generation in one efficient LLM call
-- **Multi-turn conversation state** — 24-hour context window with automatic expiry
-- **Streaming responses** — Server-Sent Events for real-time output
-- **Entity resolution** — Links mentions to existing entities ("Mom" → stored contact)
+### Target Hardware
 
-### Voice Interface
-
-| Capability | Technology |
-|------------|------------|
-| Wake Word | OpenWakeWord (ONNX) — "Jarvis" keyword |
-| Speech-to-Text | Whisper (local inference) |
-| Text-to-Speech | Piper (local inference) |
-| Voice Activity Detection | Energy-based VAD |
-| Barge-in | Interrupt during TTS playback |
-| Follow-up Window | 90-second continuous conversation |
-
-### Structured Data Domains
-
-| Domain | Capabilities |
-|--------|-------------|
-| **Food & Nutrition** | Meal logging, calorie/macro tracking, nutritional enrichment |
-| **Tasks** | Reminders, priorities, status tracking, due dates |
-| **Finance** | Expense tracking, bill management, category analytics |
-| **Entities** | People, relationships, contact info, aliases |
-| **Goals** | Personal objectives with progress tracking |
-| **Appointments** | Calendar events, reminders |
-| **Facts** | Miscellaneous knowledge storage |
-
-### Self-Evolution System
-
-The assistant learns new data patterns without code changes:
-
-1. **Pattern Detection** — Clusters unclassified messages by semantic similarity
-2. **Schema Proposal** — LLM generates table schema for detected patterns
-3. **User Approval** — Review and approve proposed structures
-4. **Dynamic Creation** — Creates SQLite tables and domain handlers
-5. **Reprocessing** — Retroactively processes captured messages
+- NVIDIA RTX 4090 (32GB VRAM)
+- Windows 11
 
 ---
 
-## Tech Stack
+## Project Phases
 
-| Layer | Technologies |
-|-------|-------------|
-| **Frontend** | React 18, TypeScript 5.3, Vite 5, Tauri 2 |
-| **Backend** | Node.js, Express 4.18, TypeScript |
-| **Database** | SQLite (sql.js), LanceDB (vectors) |
-| **Voice/Audio** | Rust, cpal 0.15, ONNX Runtime, rubato |
-| **AI Inference** | Ollama (local), qwen2.5:7b default |
-| **Testing** | Vitest with coverage |
+### Phase 1: Foundation
+- [ ] Tauri v2 project scaffold (replacing existing V1 codebase)
+- [ ] SQLite event store + documents table
+- [ ] Ollama integration (Qwen 32B + nomic-embed-text)
+- [ ] Core memory block system
+- [ ] Basic PDF ingestion → structured extraction → event storage
+- [ ] Health dashboard v1
 
----
+### Phase 2: Intelligence
+- [ ] Confidence-gated extraction (three-tier)
+- [ ] Semantic search over health events (sqlite-vec)
+- [ ] Cross-document correlation engine
+- [ ] Medication tracking with timeline
+- [ ] Lab result trending and flagging
 
-## Quick Start
+### Phase 3: Reflection & Patterns
+- [ ] Nightly reflection system
+- [ ] Core memory auto-management
+- [ ] Pattern detection (symptom ↔ medication, lab trends)
+- [ ] Provider visit preparation summaries
 
-### Prerequisites
-
-- Node.js 18+
-- Rust 1.70+ with cargo
-- [Ollama](https://ollama.ai) installed and running
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/tobelingrey/personal-ai-assistant.git
-cd personal-ai-assistant
-
-# Install frontend dependencies
-npm install
-
-# Install backend dependencies
-cd server && npm install && cd ..
-
-# Pull the default LLM model
-ollama pull qwen2.5:7b
-```
-
-### Development
-
-```bash
-# Terminal 1: Start the backend
-cd server && npm run dev
-
-# Terminal 2: Start the frontend + Tauri
-npm run dev
-```
-
-### Verify Installation
-
-```bash
-# Check backend health
-curl http://localhost:3001/health
-
-# Expected response:
-# {"status":"ok","timestamp":"...","model":"qwen2.5:7b"}
-```
+### Phase 4: Polish
+- [ ] Multi-provider document handling
+- [ ] Data export for provider sharing
+- [ ] Performance optimization
+- [ ] Backup/restore
 
 ---
 
-## Project Structure
+## Project History
 
-```
-jarvis/
-├── src/                      # React frontend
-│   ├── components/           # UI components
-│   │   ├── Chat.tsx          # Main conversation interface
-│   │   ├── VoiceIndicator.tsx
-│   │   └── evolution/        # Self-evolution UI
-│   ├── hooks/                # React hooks
-│   │   ├── useChat.ts
-│   │   ├── useVoiceState.ts
-│   │   └── useEvolution.ts
-│   └── services/             # API clients
-│
-├── server/                   # Express backend
-│   └── src/
-│       ├── services/
-│       │   ├── brain.ts      # NLU pipeline
-│       │   ├── database.ts   # SQLite + migrations
-│       │   ├── vectors.ts    # LanceDB embeddings
-│       │   ├── entityResolution.ts
-│       │   └── [domain].ts   # Domain services
-│       └── routes/           # HTTP endpoints
-│
-├── src-tauri/                # Rust backend
-│   └── src/
-│       ├── voice/            # Audio processing
-│       │   ├── wake_word.rs  # ONNX inference
-│       │   ├── vad.rs        # Voice activity
-│       │   └── state_machine.rs
-│       └── commands/         # Tauri IPC
-│
-├── docs/                     # Documentation
-│   ├── MODULES.md            # Module specifications
-│   ├── CONTEXT.md            # Design rationale
-│   └── ROADMAP.md            # Development roadmap
-│
-└── migrations/               # SQL schema files
-```
+This project has gone through several architectural iterations:
+
+1. **J.A.R.V.I.S. / PAL V1** — Broad personal assistant with 7 domain services, Node.js backend, LanceDB, self-evolution system, voice interface. The code currently in this repo is from this era.
+2. **PAL V2** — Architectural refinements. Removed 3B classifier model, added semantic router, refined enrichment pipeline.
+3. **PAL V3** — Full architectural reset. Collapsed 9 tables to 1 events table, eliminated LanceDB (single SQLite store), removed semantic router and enrichment queue, upgraded to Qwen 32B, added MemGPT-inspired memory and nightly reflection. Rust backend replacing Node.js. See `docs/PAL_PROJECT_VISION_V3.md`.
+4. **Chronicle** *(current)* — Focused the PAL V3 architecture on the health record vertical. Added document ingestion pipeline, confidence scoring, `occurred_at` timestamps, and documents table. Removed calendar, email, TODO, and other broad assistant features from scope.
+
+The existing code in this repository is from iteration 1 and does not reflect the current architecture. A full codebase replacement is planned as part of Phase 1.
+
+### Architectural Documents
+
+| Document | Status |
+|---|---|
+| `docs/PAL_PROJECT_VISION_V3.md` | Superseded by Chronicle — retained as architectural reference |
+| `docs/CHRONICLE_VISION_V1.md` | Current authoritative architecture *(pending)* |
+| `docs/MODULES.md` | From V1 — outdated |
+| `docs/CONTEXT.md` | From V1 — outdated |
+| `docs/ROADMAP.md` | From V1 — outdated |
 
 ---
 
-## Configuration
+## What Was Removed (From Original J.A.R.V.I.S.)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `JARVIS_MODEL` | `qwen2.5:7b` | Ollama model for inference |
-| `PICOVOICE_ACCESS_KEY` | — | Optional: Porcupine wake word |
-| `NODE_ENV` | `development` | Environment mode |
-
----
-
-## Development Commands
-
-```bash
-# Frontend + Tauri
-npm run dev                   # Development server
-npm run build                 # Production build
-
-# Backend
-cd server
-npm run dev                   # Development with hot reload
-npm test                      # Run tests (watch mode)
-npm run test:run              # Run tests once
-npm run build                 # TypeScript compilation
-```
-
----
-
-## Documentation
-
-| Document | Purpose |
-|----------|---------|
-| [MODULES.md](docs/MODULES.md) | Module boundaries and interfaces |
-| [CONTEXT.md](docs/CONTEXT.md) | Design philosophy and decisions |
-| [ROADMAP.md](docs/ROADMAP.md) | Current tasks and future plans |
-| [CLAUDE.md](CLAUDE.md) | AI development guidelines |
-
----
-
-## Roadmap
-
-### Completed
-- Core chat with streaming responses
-- Single-pass brain architecture
-- 7 domain services with CRUD
-- Voice state machine with barge-in
-- Background enrichment queue
-- Entity resolution layer
-- Self-evolution system (all phases)
-- Test coverage with Vitest
-
-### In Progress
-- OpenWakeWord integration
-- Audio device configuration
-
-### Planned
-- Multi-model routing (task-specific models)
-- Silero VAD (improved voice detection)
-- Dashboard with analytics
-- Data export/import
-- Plugin system
-
----
-
-## Contributing
-
-Contributions are welcome! Please read the documentation in `docs/` before submitting PRs.
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests: `cd server && npm test`
-5. Submit a pull request
+| Removed | Reason |
+|---|---|
+| Voice interface (wake word, STT, TTS) | Cut from scope. Can revisit post-MVP. |
+| Self-evolution system | Over-engineered for a single-user health tool. |
+| 7 domain services (finance, tasks, goals, etc.) | Scope narrowed to health records. |
+| Node.js + Express backend | Replaced by Rust for performance and Ollama integration. |
+| LanceDB (separate vector store) | Replaced by sqlite-vec. One store, not two. |
+| Background enrichment queue | Extraction happens inline during document import. |
+| Semantic router | One 32B call handles classification. |
+| Multi-turn 24-hour conversation window | Replaced by core memory blocks (always in context). |
 
 ---
 
@@ -297,8 +265,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-<div align="center">
-
-**Built with privacy in mind. Your data stays yours.**
-
-</div>
+**Your medical records. Your machine. Your understanding.**
